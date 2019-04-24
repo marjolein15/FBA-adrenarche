@@ -1,0 +1,29 @@
+#!/bin/sh
+
+projectdir=[set your projectdir]
+
+#20. Extract individual mean fd/fc values of significant clusters for plotting
+#This example depends on there being a statistically significant effect in a particular pathway, where all significant fixels reside within adjacent voxels 
+#(and other unrelated statistically-significant pathways cannot be connected via a chain of adjacent voxels)
+# and there are no statistically-significant crossing-fibre fixels within that pathway. 
+
+#-Generate a mask of voxels that contain at least one statistically-significant fixel:
+fixel2voxel fwe_pvalue_t#.mif max - | mrthreshold - fwe_voxel_mask.mif -abs 0.95
+
+#-Run a connected-component analysis to select contiguous clusters:
+maskfilter fwe_voxel_mask.mif connect fwe_voxel_clusters.mif
+
+#-Using mrview, determine the cluster that corresponds to your pathway of interest. Each cluster will contain an integer value; voxels within the largest cluster will have a value of 1, those within the second-largest cluster will have a value of 2, and so on. 
+#Generate a voxel mask corresponding to your pathway of interest: 
+#(Replace "^" with the integer value you determined from step 3)
+mrcalc fwe_voxel_clusters.mif ^ -eq pathway_voxel_mask.mif -datatype bit
+
+#-Project this voxel pathway mask up to all fixels within the selected voxels: (change directory names to the right folders)
+voxel2fixel pathway_voxel_mask.mif inputfixel_directory/ outputfixel_directory/ pathway_fixel_mask.mif
+
+#-Use the combination of a p<0.05 threshold, and your pathway mask, to generate a fixel mask containing only significant fixels within your pathway of interest:
+mrcalc fwe_pvalue_t#.mif 0.95 -gt pathway_fixel_mask.mif -mult fwe_pathway_fixel_mask.mif
+
+#-Once you have this fixel mask, getting e.g. the mean FD/FC within the statistically-significant segment of the pathway is easy:
+for pp in ${projectdir}/template/difference_log_fc/difference_F*.mif ; do mrstats ${pp} -mask fwe_pathway_fixel_mask.mif -output mean >> pathway_meanfc_pp.txt ; done
+

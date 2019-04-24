@@ -1,0 +1,68 @@
+#!/bin/sh
+
+homedir=[set your home directory]
+projectdir=[set your projectdir]
+cd ${projectdir}/ALL_SCANS
+
+## convert DICOM to nii.
+ls -d * | xargs -I TODO echo fsl_sub ${homedir}/mricron/dcm2nii -d N -e N ./TODO | bash
+
+# Project-specific info:
+# acquisition parameters: 0 -1 0 0.05586
+# acquisition parameters blips: 0 -1 0 0.05586; 0 1 0 0.05586
+# index = row of 50 1's
+# to copy these files to all folders: echo *_*_DWI | xargs -n 1 cp acqparams.txt index.txt
+
+## preprocess DWI images
+# Denoise (in MrTrix)
+for person in F*_DWI ; do
+echo working on participant $person
+cd $person/Wave1
+dwidenoise DWI45DirB3000.nii.gz DWI_denoised.nii.gz -noise noise.nii.gz
+cd ${projectdir}/ALL_SCANS/$person/Wave2
+dwidenoise DWI45DirB3000.nii.gz DWI_denoised.nii.gz -noise noise.nii.gz
+cd ../..
+done
+
+# TOPUP (in FSL 5.0.11)
+# take blip up and down scans and merge into one file.
+for person in F*_DWI ; do
+echo working on participant $person
+cd $person/Wave1
+fslmerge -a DWI_b0s BlipUp*.nii.gz BlipDown*.nii.gz
+cd ${projectdir}/ALL_SCANS/$person/Wave2
+fslmerge -a DWI_b0s BlipUp*.nii.gz BlipDown*.nii.gz
+cd ../..
+done
+# apply topup (use file with both b0 volumes as input).
+for person in F*_DWI ; do
+echo working on participant $person
+cd ${person}/Wave1
+topup --imain=DWI_b0s --datain=acqparams_blips.txt --config=b02b0.cnf --out=topup_DWI_b0s --iout=DWI_b0s_tu
+cd ${projectdir}/ALL_SCANS/${person}/Wave2
+topup --imain=DWI_b0s --datain=acqparams_blips.txt --config=b02b0.cnf --out=topup_DWI_b0s --iout=DWI_b0s_tu
+cd ../..
+done
+
+# create a brain mask from the mean of the (corrected) b0s.
+for person in F*_DWI ; do
+echo working on participant $person
+cd ${person}/Wave1
+fslmaths DWI_b0s_tu.nii.gz -Tmean DWI_b0_mean.nii.gz
+bet DWI_b0_mean DWI_b0_brain -m -f 0.3
+cd ${projectdir}/ALL_SCANS/${person}/Wave2
+fslmaths DWI_b0s_tu.nii.gz -Tmean DWI_b0_mean.nii.gz 
+bet DWI_b0_mean DWI_b0_brain -m -f 0.3
+done
+
+# check if brain extraction went right.
+for person in F*_DWI ; do
+cp ${person}/Wave1/DWI_b0_brain.nii.gz betted/${person}_wave1_b0_brain.nii.gz
+cp ${person}/Wave2/DWI_b0_brain.nii.gz betted/${person}_wave2_b0_brain.nii.gz
+done
+slicesdir betted/*_b0_brain.nii.gz
+
+# run eddy correction (with intravolume motion correction and outlier replacement, fsl 5.0.11)
+for pp in F*_DWI ; do cd ${pp}/Wave1 ; eddy_cuda7.5 --imain=DWI_denoised.nii.gz --mask=DWI_b0_brain_mask.nii.gz --index=index.txt --acqp=acqparams.txt --bvecs=DWI45DirB3000.bvec --bvals=DWI45DirB3000.bval --flm=quadratic --topup=topup_DWI_b0s --repol --out=fancyeddycor_DWI --mporder=12 --slspec=../../../FACTS_slspec.txt ; cd ${projectdir}/ALL_SCANS ; done
+for pp in F*_DWI ; do cd ${pp}/Wave2 ; eddy_cuda7.5 --imain=DWI_denoised.nii.gz --mask=DWI_b0_brain_mask.nii.gz --index=index.txt --acqp=acqparams.txt --bvecs=DWI45DirB3000.bvec --bvals=DWI45DirB3000.bval --flm=quadratic --topup=topup_DWI_b0s --repol --out=fancyeddycor_DWI --mporder=12 --slspec=../../../FACTS_slspec.txt ; cd ${projectdir}/ALL_SCANS ; done
+

@@ -1,0 +1,117 @@
+#!/bin/sh
+
+projectdir=[set your projectdir]
+
+
+###### AFD pipeline ##### in MrTrix
+
+cd ${projectdir}/ALL_SCANS
+#Reorganize so that only pp with both scans are included and there is one folder with 2 folders for each pp (wave 1 and 2)
+
+#1. Brain mask
+
+foreach F* : dwi2mask IN/fancyeddycor_DWI.nii.gz IN/dwi_mask.mif -fslgrad IN/fancyeddycor_DWI.eddy_rotated_bvecs IN/DWI45DirB3000.bval
+
+#2.Bias field correction (this uses fsl)
+
+foreach F* : dwibiascorrect -fsl -mask IN/dwi_mask.mif IN/fancyeddycor_DWI.nii.gz IN/dwi_denoised_preproc_bias.mif -fslgrad IN/fancyeddycor_DWI.eddy_rotated_bvecs IN/DWI45DirB3000.bval
+
+#3.Intensity normalization
+
+mkdir -p ../dwiintensitynorm/dwi_input
+mkdir ../dwiintensitynorm/mask_input
+
+foreach F* : ln -s ${projectdir}/ALL_SCANS/IN/dwi_denoised_preproc_bias.mif ../dwiintensitynorm/dwi_input/IN.mif
+foreach F* : ln -s ${projectdir}/ALL_SCANS/IN/dwi_mask.mif ../dwiintensitynorm/mask_input/IN.mif
+
+dwiintensitynorm ../dwiintensitynorm/dwi_input/ ../dwiintensitynorm/mask_input/ ../dwiintensitynorm/dwi_output/ ../dwiintensitynorm/fa_template.mif ../dwiintensitynorm/fa_template_wm_mask.mif
+
+for scan in F* ; do ln -s ${projectdir}/dwiintensitynorm/dwi_output/${scan}.mif ${scan}/dwi_denoised_preproc_bias_norm.mif; done
+## ! Check white matter mask is appropriate
+## !! Check if scale factors are not related to variables of interest. To extract scale factors, run this for every subject: mrinfo <normalised_dwi> -property dwi_norm_scale_factor
+
+#4.Average response function
+
+foreach F* : dwi2response tournier IN/dwi_denoised_preproc_bias_norm.mif IN/response.txt
+average_response F*/response.txt ../group_average_response.txt
+
+#5.Upsample DWI images
+
+foreach F* : mrresize IN/dwi_denoised_preproc_bias_norm.mif -vox 1.25 IN/dwi_denoised_preproc_bias_norm_upsampled.mif
+
+#6.Compute upsampled brain mask images
+
+foreach F* : dwi2mask IN/dwi_denoised_preproc_bias_norm_upsampled.mif IN/dwi_mask_upsampled.mif
+
+#7. FOD estimation
+
+foreach F* : dwiextract IN/dwi_denoised_preproc_bias_norm_upsampled.mif - \| dwi2fod msmt_csd - ../group_average_response.txt IN/wmfod.mif -mask IN/dwi_mask_upsampled.mif
+
+#8.FOD template (from subset of the data)
+
+mkdir -p ../template/fod_input
+mkdir ../template/mask_input
+
+foreach `ls -d *Wave1 | sort -R | tail -20` : ln -s ${projectdir}/ALL_SCANS/IN/wmfod.mif ../template/fod_input/PRE.mif ";" ln -s ${projectdir}/ALL_SCANS/IN/dwi_mask_upsampled.mif ../template/mask_input/PRE.mif
+foreach `ls -d *Wave2 | sort -R | tail -20` : ln -s ${projectdir}/ALL_SCANS/IN/wmfod.mif ../template/fod_input/PRE.mif ";" ln -s ${projectdir}/ALL_SCANS/IN/dwi_mask_upsampled.mif ../template/mask_input/PRE.mif
+
+population_template ../template/fod_input -mask_dir ../template/mask_input ../template/wmfod_template.mif -voxel_size 1.25
+
+#9. Register FOD images to template
+
+foreach F* : mrregister IN/wmfod.mif -mask1 IN/dwi_mask_upsampled.mif ../template/wmfod_template.mif -nl_warp IN/subject2template_warp.mif IN/template2subject_warp.mif
+
+#10.Compute the intersection of all subject masks
+
+foreach F* : mrtransform IN/dwi_mask_upsampled.mif -warp IN/subject2template_warp.mif -interp nearest IN/dwi_mask_in_template_space.mif
+mrmath */dwi_mask_in_template_space.mif min ../template/mask_intersection.mif
+
+#11.Compute white matter template fixel mask
+
+fod2fixel ../template/wmfod_template.mif -mask ../template/mask_intersection.mif ../template/fixel_temp -peak peaks.mif
+
+## ! view the peaks file using the vector plot tool in mrview and identify an appropriate threshold that removes peaks from grey matter, yet does not introduce any 'holes' in your white matter (approximately 0.33).
+
+mrthreshold ../template/fixel_temp/peaks.mif -abs 0.3 ../template/fixel_temp/mask.mif
+
+fixel2voxel ../template/fixel_temp/mask.mif max - | mrfilter - median ../template/voxel_mask.mif
+rm -rf ../template/fixel_temp
+
+fod2fixel -mask ../template/voxel_mask.mif -fmls_peak_value 0.2 ../template/wmfod_template.mif ../template/fixel_mask
+
+## !!Check the fixel mask (index.mif) in mrview. It should have all fixels in white matter (especially check crossing fibres) but no spurious ones in grey matter. If fixels are missing, lower the -fmls_peak_value
+## !! Check size of fixel mask with mrinfo -size ../template/fixel/directions.mif (should be < 500.000)
+
+#12.Warp FOD images to template space
+
+foreach F* : mrtransform IN/wmfod.mif -warp IN/subject2template_warp.mif -noreorientation IN/fod_in_template_space.mif
+
+#13. Segment FOD images to estimate fixels and FD
+
+foreach F* : fod2fixel IN/fod_in_template_space.mif -mask ../template/voxel_mask.mif IN/fixel_in_template_space -afd fd.mif
+
+#14. Reorient fixel orientations
+
+foreach F* : fixelreorient IN/fixel_in_template_space IN/subject2template_warp.mif IN/fixel_in_template_space --force
+
+#15. Assign subject fixels to template fixels
+
+foreach F* : fixelcorrespondence IN/fixel_in_template_space/fd.mif ../template/fixel_mask ../template/fd PRE.mif
+
+#16. Compute fiber cross section metric
+
+foreach F* : warp2metric IN/subject2template_warp.mif -fc ../template/fixel_mask ../template/fc IN.mif
+
+mkdir ../template/log_fc
+cp ../template/fc/index.mif ../template/fc/directions.mif ../template/log_fc
+foreach F* : mrcalc ../template/fc/IN.mif -log ../template/log_fc/IN.mif
+
+#17. Whole brain tractography on FOD template
+
+cd ../template
+tckgen -angle 22.5 -maxlen 250 -minlen 10 -power 1.0 wmfod_template.mif -seed_image voxel_mask.mif -mask voxel_mask.mif -select 20000000 tracks_20_million.tck
+
+#18. Reduce biases in tractogram densities
+
+tcksift tracks_20_million.tck fod_template.mif tracks_2_million_sift.tck -term_number 2000000
+

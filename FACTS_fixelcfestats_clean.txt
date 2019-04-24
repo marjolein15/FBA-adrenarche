@@ -1,0 +1,43 @@
+#!/bin/sh
+
+projectdir=[set your projectdir]
+
+
+#19. Perform statistical analyses
+
+cd ${projectdir}
+mkdir stats
+
+One-sample t-test: 
+mkdir difference_fd ; mkdir difference_log_fc ; mkdir difference_fdc
+cd fd ; for pp in F*_Wave2.mif ; do facID=`echo $pp | cut -d _ -f 1-3` ; mrcalc ${facID}_Wave2.mif ${facID}_Wave1.mif -subtract ../difference_fd/difference_${facID}.mif ; done
+cd ../log_fc ; for pp in F*_Wave2.mif ; do facID=`echo $pp | cut -d _ -f 1-3` ; mrcalc ${facID}_Wave2.mif ${facID}_Wave1.mif -subtract ../difference_log_fc/difference_${facID}.mif ; done
+cd ../fdc ; for pp in F*_Wave2.mif ; do facID=`echo $pp | cut -d _ -f 1-3` ; mrcalc ${facID}_Wave2.mif ${facID}_Wave1.mif -subtract ../difference_fdc/difference_${facID}.mif ; done
+
+cd ${projectdir}/template
+cp fd/index.mif difference_fd/ ; cp fd/index.mif difference_log_fc/ ; cp fd/index.mif difference_fdc/
+cp fd/directions.mif difference_fd/ ; cp fd/directions.mif difference_log_fc/ ; cp fd/directions.mif difference_fdc/
+
+# create txt file with all file names in it. Create matrix and contrast files.
+
+fixelcfestats difference_fd difference_files.txt change_matrix.txt contrast_1samplet.txt tracks_2_million_sift.tck -errors ise ../stats/change_time_fd/1samplet
+fixelcfestats difference_log_fc difference_files.txt change_matrix.txt contrast_1samplet.txt tracks_2_million_sift.tck -errors ise ../stats/change_time_fc/1samplet
+
+fixelcfestats difference_fd difference_files_hormonesample.txt DHEA_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/change_DHEA
+fixelcfestats difference_log_fc difference_files_hormonesample.txt DHEA_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/change_DHEA
+
+fixelcfestats difference_fd difference_files_DHEASsample.txt DHEAS_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/change_DHEAS
+fixelcfestats difference_log_fc difference_files_DHEASsample.txt DHEAS_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/change_DHEAS
+
+fixelcfestats difference_fd difference_files_hormonesample.txt TST_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/change_TST
+fixelcfestats difference_log_fc difference_files_hormonesample.txt TST_change_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/change_TST
+
+DHEA_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/time1_DHEA
+fixelcfestats difference_log_fc difference_files_hormonesample.txt DHEA_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/time1_DHEA
+
+fixelcfestats difference_fd difference_files_DHEAST1sample.txt DHEAS_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/time1_DHEAS
+fixelcfestats difference_log_fc difference_files_DHEAST1sample.txt DHEAS_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/time1_DHEAS
+
+fixelcfestats difference_fd difference_files_hormonesample.txt TST_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fd/time1_TST
+fixelcfestats difference_log_fc difference_files_hormonesample.txt TST_time1_matrix.txt contrast_hormone.txt tracks_2_million_sift.tck ../stats/change_time_fc/time1_TST
+
