@@ -1,0 +1,67 @@
+#TBSS analysis of FACTS data. Preprocessing is listed in FACTS_preproc_clean
+
+# run DTIFIT.    
+for scan in F* ; do 
+mkdir ${scan}/DTIFIT ; cd ${scan}
+dtifit -k fancyeddycor_DWI -m DWI_b0_brain_mask -r fancyeddycor_DWI.eddy_rotated_bvecs -b DWI45DirB3000.bval -o DTIFIT/fitted_DTI --sse 
+cd ..
+done 
+
+
+mkdir TBSS
+for person in F*DWI_Wave* ; do
+cp ${person}/DTIFIT/fitted_DTI_FA.nii.gz ../TBSS/${person}_FA.nii.gz
+cp ${person}/DTIFIT/fitted_DTI_MD.nii.gz ../TBSS/MD/${person}_FA.nii.gz
+done
+
+cd TBSS
+
+tbss_1_preproc *.nii.gz ; tbss_2_reg -T ; tbss_3_postreg -S ; tbss_4_prestats 0.2
+
+cd stats/
+
+# Create maps of difference between time points from all_FA_skel or all_MD_skel, and keep only the participants with hormone data
+
+mkdir all_FA_skeletonised_split ; cd all_FA_skeletonised_split; fslsplit ../all_FA_skeletonised.nii.gz 
+
+for time2scan in `seq 1 2 9` ; do time1scan="$(($time2scan-1))"; fslmaths vol000${time2scan}.nii.gz -sub vol000${time1scan}.nii.gz diff_000${time2scan}.nii.gz ; done
+for time2scan in `seq 11 2 99` ; do time1scan="$(($time2scan-1))"; fslmaths vol00${time2scan}.nii.gz -sub vol00${time1scan}.nii.gz diff_00${time2scan}.nii.gz ; done
+for time2scan in `seq 101 2 245` ; do time1scan="$(($time2scan-1))"; fslmaths vol0${time2scan}.nii.gz -sub vol0${time1scan}.nii.gz diff_0${time2scan}.nii.gz ; done
+
+#Remove the volumes to be excluded (diff9, diff19 and diff35 for all; 29, 69, 127, 133, 147, 159, 165, 183, 229, 233 for hormones; another two for DHEAS time1 123, 209; another three for DHEAS change 103 129 89)
+#merge them back together
+
+fslmerge -a ../all_FA_skel_diff_fullsample.nii.gz diff*.nii.gz
+
+
+# run randomise from stats dir 
+#randomise -i all_FA_skel_diff -o Change_time/FA_1samplet -1 --T2
+#randomise -i all_MD_skel_diff -o Change_time/MD_1samplet -1 --T2
+
+randomise -i all_FA_skel_diff -o Change_time/FA_change_main -m mean_FA_skeleton_mask -d Change_time/change_model.mat -t Change_time/change_model.con --T2
+randomise -i all_MD_skel_diff -o Change_time/MD_change_main -m mean_FA_skeleton_mask -d Change_time/change_model.mat -t Change_time/change_model.con --T2
+
+randomise -i all_FA_skel_diff_hormonesample -o DHEA_time1/FA_DHEA_time1 -m mean_FA_skeleton_mask -d DHEA_time1/DHEA_time1_model.mat -t DHEA_time1/DHEA_time1_model.con --T2
+randomise -i all_MD_skel_diff_hormonesample -o DHEA_time1/MD_DHEA_time1 -m mean_FA_skeleton_mask -d DHEA_time1/DHEA_time1_model.mat -t DHEA_time1/DHEA_time1_model.con --T2
+
+randomise -i all_FA_skel_diff_hormonesample -o TST_time1/FA_TST_time1 -m mean_FA_skeleton_mask -d TST_time1/TST_time1_model.mat -t TST_time1/TST_time1_model.con --T2
+randomise -i all_MD_skel_diff_hormonesample -o TST_time1/MD_TST_time1 -m mean_FA_skeleton_mask -d TST_time1/TST_time1_model.mat -t TST_time1/TST_time1_model.con --T2
+
+randomise -i all_FA_skel_diff_DHEAST1sample -o DHEAS_time1/FA_DHEAS_time1 -m mean_FA_skeleton_mask -d DHEAS_time1/DHEAS_time1_model.mat -t DHEAS_time1/DHEAS_time1_model.con --T2
+randomise -i all_MD_skel_diff_DHEAST1sample -o DHEAS_time1/MD_DHEAS_time1 -m mean_FA_skeleton_mask -d DHEAS_time1/DHEAS_time1_model.mat -t DHEAS_time1/DHEAS_time1_model.con --T2
+
+randomise -i all_FA_skel_diff_hormonesample -o DHEA_change/FA_DHEA_change -m mean_FA_skeleton_mask -d DHEA_change/DHEA_change_model.mat -t DHEA_change/DHEA_change_model.con --T2
+randomise -i all_MD_skel_diff_hormonesample -o DHEA_change/MD_DHEA_change -m mean_FA_skeleton_mask -d DHEA_change/DHEA_change_model.mat -t DHEA_change/DHEA_change_model.con --T2
+
+randomise -i all_FA_skel_diff_hormonesample -o TST_change/FA_TST_change -m mean_FA_skeleton_mask -d TST_change/TST_change_model.mat -t TST_change/TST_change_model.con --T2
+randomise -i all_MD_skel_diff_hormonesample -o TST_change/MD_TST_change -m mean_FA_skeleton_mask -d TST_change/TST_change_model.mat -t TST_change/TST_change_model.con --T2
+
+randomise -i all_FA_skel_diff_DHEASchangesample -o DHEAS_change/FA_DHEAS_change -m mean_FA_skeleton_mask -d DHEAS_change/DHEAS_change_model.mat -t DHEAS_change/DHEAS_change_model.con --T2
+randomise -i all_MD_skel_diff_DHEASchangesample -o DHEAS_change/MD_DHEAS_change -m mean_FA_skeleton_mask -d DHEAS_change/DHEAS_change_model.mat -t DHEAS_change/DHEAS_change_model.con --T2
+
+#extract mean FA across clusters
+Fslmaths FA_change_tfce_corrp_tstat1.nii.gz -thr 0.95 -bin FA_change_allsignvoxels.nii.gz 
+Fslmeants -i ../all_FA_skel_diff.nii.gz -m FA_change_allsignvoxels.nii.gz -o timeseries_change_FA.txt
+
+Fslmaths FA_TST_change_tfce_corrp_tstat2.nii.gz -thr 0.95 -bin FA_TST_change_allsignvox.nii.gz 
+Fslmeants -i ../all_FA_skel_diff_hormonesample.nii.gz -m FA_TST_change_allsignvox.nii.gz -o timeseries_TST_change_FA.txt
